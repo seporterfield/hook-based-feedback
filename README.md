@@ -29,10 +29,6 @@ A hook is a script Claude Code runs on a lifecycle event. This quickstart uses `
 [Claude hooks reference](https://code.claude.com/docs/en/hooks) for a list of all configurable
 hooks.
 
-- `session_start.py` - setup
-- `edit.py` - runs after every edit
-- `stop.py` - runs when agent finishes responding
-
 ## Setup
 
 Hand [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) to your agent. It wires these hooks into

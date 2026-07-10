@@ -16,6 +16,8 @@ type: feedback
 Don't make this mistake again: ....
 ```
 
+After setting this up you will have some feedback as a quickstart:
+
 - Validate system claims against docs or source, never from training data
 - No status-quo open questions: research what is knowable, ask only about desired state
 - Only write code comments when explicitly asked

@@ -30,6 +30,7 @@ A hook is a script Claude Code runs on a lifecycle event. This quickstart uses `
 hooks.
 
 ## Architecture
+Events -> orchestrator scripts -> spawns one claude haiku per markdown file to judge if claude must be punished with feedback.
 <img width="929" height="703" alt="image" src="https://github.com/user-attachments/assets/4de05435-98ba-4d79-9d5d-d0e3d3f60463" />
 
 

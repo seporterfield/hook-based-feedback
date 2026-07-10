@@ -1,9 +1,0 @@
-{
-  "_comment": "Per-user hooks fanned in by the hook-based branch orchestrators. AGENT_HOOKS_DIR resolves to this directory. matcher is a regex on tool_name (empty = always). run is a shell command; the event payload arrives on stdin. exit 2 blocks. The Stop feedback-violation judge is built into the branch's stop.py and reads every feedback_*.md, so response-level rules need no entry here. This entry adds edit-time enforcement for rules marked apply: code.",
-  "PostToolUse": [
-    {
-      "matcher": "Edit|Write|NotebookEdit|Bash",
-      "run": "python3 \"$AGENT_HOOKS_DIR\"/check-edit-feedback.py"
-    }
-  ]
-}

@@ -1,3 +1,0 @@
-- [Validate system claims against docs](feedback_validate_system_claims_against_docs.md) — verify present-tense behavior claims against docs/source, never from training data
-- [No status-quo open questions](feedback_no_status_quo_open_questions.md) — open questions are desired-state only; research anything answerable from code/configs/history
-- [Only write code comments when asked](feedback_no_unsolicited_comments.md) — zero unsolicited comments; don't strip load-bearing WHY comments either

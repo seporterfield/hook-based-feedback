@@ -8,7 +8,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-MEMORY_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).parent))
+from _harness import memory_dir
+
+MEMORY_DIR = memory_dir()
 TIMEOUT_S = 120
 MAX_CONTENT_CHARS = 6000
 MAX_MEMORY_BODY_CHARS = 1200

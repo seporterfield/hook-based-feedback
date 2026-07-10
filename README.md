@@ -24,8 +24,10 @@ After setting this up you will have some feedback as a quickstart:
 
 ## Hooks
 
-A hook is a script Claude Code runs on a lifecycle event. This quickstart uses three, all in
-`hooks/` (you can [add more](https://code.claude.com/docs/en/hooks)):
+A hook is a script Claude Code runs on a lifecycle event. This quickstart uses `SessionStart`,
+`PostToolUse`, and `Stop` hooks. You can add more. See the
+[Claude hooks reference](https://code.claude.com/docs/en/hooks) for a list of all configurable
+hooks.
 
 - `session_start.py` - setup
 - `edit.py` - runs after every edit

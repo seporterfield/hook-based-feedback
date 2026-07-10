@@ -1,35 +1,38 @@
 # hook-based-feedback
 
-Starter feedback repo for the `hook-based` harness branch of metadev. It holds the
-per-user rules the agent enforces on itself, plus the hooks the branch's orchestrators
-fan in.
+This repo holds the feedback rules a Claude Code agent enforces on itself. Each file is
+one rule: something you told the agent to do or stop doing. You fork the repo, point your
+agent at your fork, and add a rule every time you correct the agent.
 
-The harness works like this: the branch ships five per-event hook orchestrators. On Stop,
-a built-in judge reads every `feedback_*.md` here and asks a haiku model whether the last
-response violated any of them. The `hooks/manifest.json` wires additional per-event checks,
-resolved against this directory.
+## How the agent uses these rules
 
-## Contents
+When the agent finishes a response, a check reads every `feedback_*.md` here and asks a
+small model whether the response broke any rule. If one broke, the agent has to revise
+before the turn ends. This check is always on and needs nothing beyond the rule files.
+
+Some rules govern code the agent writes, not its prose. Those carry `apply: code` in their
+frontmatter. `hooks/manifest.json` runs `hooks/check-edit-feedback.py` right after each
+edit, so a code rule is caught as the code is written, not only at the end of the turn.
+
+## What's in the repo
 
 - `feedback_*.md` — the rules. Three ship by default:
-  - Validate system claims against docs or source (no answering from training data)
-  - No status-quo open questions (research what is knowable, only ask about desired state)
+  - Validate system claims against docs or source, never from training data
+  - No status-quo open questions: research what is knowable, ask only about desired state
   - Only write code comments when explicitly asked
-- `hooks/manifest.json` — wires `check-edit-feedback.py` on PostToolUse so rules marked
-  `apply: code` in their frontmatter are caught at edit time, not just at end of turn.
-- `hooks/check-edit-feedback.py` — the edit-time code-style judge. It discovers which rules
-  apply to code by the `apply: code` frontmatter marker, and derives the memory dir from its
-  own location, so it works regardless of checkout path.
+- `hooks/manifest.json` — wires the edit-time check described above
+- `hooks/check-edit-feedback.py` — the edit-time judge. It finds code rules by their
+  `apply: code` marker and derives its memory dir from its own location, so it works at any
+  checkout path
 
 ## Use it
 
-This repo is the default `AGENT_FEEDBACK_REPO` for the `hook-based` branch. To use your own,
-fork it and set the env var to your fork:
+Point your agent's `AGENT_FEEDBACK_REPO` at this repo, or fork it and use your fork:
 
 ```
 export AGENT_FEEDBACK_REPO=https://<token>@github.com/<you>/hook-based-feedback.git
 ```
 
 Add a rule by writing a new `feedback_<slug>.md` with frontmatter (`name`, `description`,
-`type: feedback`, and `apply: code` if it should be enforced on code edits), then commit and
-push. The branch syncs this repo into the derived memory dir on session start.
+`type: feedback`, plus `apply: code` if it should be enforced on code edits), then commit
+and push. The agent syncs this repo into its memory dir at session start.

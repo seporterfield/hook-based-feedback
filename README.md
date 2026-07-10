@@ -29,6 +29,10 @@ A hook is a script Claude Code runs on a lifecycle event. This quickstart uses `
 [Claude hooks reference](https://code.claude.com/docs/en/hooks) for a list of all configurable
 hooks.
 
+## Architecture
+<img width="929" height="703" alt="image" src="https://github.com/user-attachments/assets/4de05435-98ba-4d79-9d5d-d0e3d3f60463" />
+
+
 ## Setup
 
 Hand [AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md) to your agent. It wires these hooks into

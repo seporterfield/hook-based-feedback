@@ -24,7 +24,7 @@ def test_sidechain_excluded_by_default():
 
 def test_chronological_deltas_and_categories():
     rows = load()
-    observed = [(round(row["delta"]), row["category"]) for row in rows]
+    observed = [(round(row["duration"]), row["category"]) for row in rows]
     expected = [
         (0, "human_wait"),
         (5, "inference"),
@@ -38,9 +38,11 @@ def test_chronological_deltas_and_categories():
     assert observed == expected
 
 
-def test_output_tokens_captured_on_inference():
+def test_tokens_generated_captured_on_inference():
     rows = load()
-    inference_tokens = [row["output_tokens"] for row in rows if row["category"] == "inference"]
+    inference_tokens = [
+        row["tokens_generated"] for row in rows if row["category"] == "inference"
+    ]
     assert inference_tokens == [42, 10, 7]
 
 
@@ -63,7 +65,7 @@ def test_report_aggregate_descending_with_calls():
 
 def test_report_totals_partition_wall_clock():
     rows = load()
-    wall = sum(row["delta"] for row in rows)
+    wall = sum(row["duration"] for row in rows)
     per_category = sum(bucket["seconds"] for _, bucket in trace.aggregate(rows))
     assert round(wall) == 123
     assert round(per_category) == round(wall)

@@ -105,11 +105,10 @@ def classify(entry):
 
 def build_rows(entries, id_to_tool):
     rows = []
-    origin = entries[0]["_timestamp"] if entries else None
     previous = None
     for entry in entries:
         timestamp = entry["_timestamp"]
-        delta = (timestamp - previous).total_seconds() if previous is not None else 0.0
+        duration = (timestamp - previous).total_seconds() if previous is not None else 0.0
         previous = timestamp
         kind, payload = classify(entry)
         message = entry.get("message", {})
@@ -131,11 +130,11 @@ def build_rows(entries, id_to_tool):
             detail = preview(message_text(message))
         rows.append(
             {
-                "offset": (timestamp - origin).total_seconds(),
-                "delta": delta,
+                "timestamp": timestamp,
+                "duration": duration,
                 "category": category,
                 "detail": detail,
-                "output_tokens": output_tokens(entry),
+                "tokens_generated": output_tokens(entry),
             }
         )
     return rows
@@ -146,25 +145,29 @@ def preview(text, width=64):
     return collapsed[:width]
 
 
-def render_trace(rows, absolute, limit):
+def format_timestamp(value):
+    return value.strftime("%Y-%m-%d %H:%M:%S.") + "%03d" % (value.microsecond // 1000)
+
+
+def render_trace(rows, limit):
     lines = []
-    header = "%9s %8s  %-40s %-44s %7s" % (
-        "t+ (s)",
-        "delta",
+    header = "%-23s %12s  %-40s %-40s %16s" % (
+        "timestamp (UTC)",
+        "duration(s)",
         "category",
         "detail",
-        "out_tok",
+        "tokens generated",
     )
     lines.append(header)
     lines.append("-" * len(header))
     shown = rows if not limit else rows[:limit]
     for row in shown:
-        tokens = row["output_tokens"]
+        tokens = row["tokens_generated"]
         lines.append(
-            "%9.0f %8.1f  %-40.40s %-44.44s %7s"
+            "%-23s %12.2f  %-40.40s %-40.40s %16s"
             % (
-                row["offset"],
-                row["delta"],
+                format_timestamp(row["timestamp"]),
+                row["duration"],
                 row["category"],
                 row["detail"],
                 "" if tokens is None else tokens,
@@ -179,14 +182,14 @@ def aggregate(rows):
     totals = OrderedDict()
     for row in rows:
         bucket = totals.setdefault(row["category"], {"seconds": 0.0, "calls": 0})
-        bucket["seconds"] += row["delta"]
+        bucket["seconds"] += row["duration"]
         bucket["calls"] += 1
     return sorted(totals.items(), key=lambda item: item[1]["seconds"], reverse=True)
 
 
 def render_report(rows):
     ranked = aggregate(rows)
-    wall = sum(row["delta"] for row in rows)
+    wall = sum(row["duration"] for row in rows)
     lines = []
     lines.append(
         "total wall clock: %.0fs (%.1f min) across %d steps" % (wall, wall / 60, len(rows))
@@ -222,7 +225,6 @@ def main(argv=None):
     trace_parser = sub.add_parser("trace")
     trace_parser.add_argument("session")
     trace_parser.add_argument("--include-sidechain", action="store_true")
-    trace_parser.add_argument("--absolute", action="store_true")
     trace_parser.add_argument("--limit", type=int, default=0)
 
     report_parser = sub.add_parser("report")
@@ -238,7 +240,7 @@ def main(argv=None):
     rows = build_rows(entries, id_to_tool)
 
     if args.command == "trace":
-        print(render_trace(rows, args.absolute, args.limit))
+        print(render_trace(rows, args.limit))
     else:
         print(render_report(rows))
     return 0

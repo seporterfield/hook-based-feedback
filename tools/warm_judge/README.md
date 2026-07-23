@@ -22,6 +22,21 @@ full price, and no 9-process boot storm on every stop.
 
 ## How it works
 
+```mermaid
+flowchart TD
+    stop["stop.py (Stop hook)"] -->|"unix socket"| daemon["warm_judge daemon"]
+
+    subgraph pool["warm pool"]
+        slot_a["haiku, shard 1 primed"]
+        slot_b["haiku, shard 2 primed"]
+        slot_n["haiku, shard N primed"]
+    end
+
+    daemon -->|"response to one primed<br/>haiku per shard, in parallel"| pool
+    pool -->|"merged verdict:<br/>rule filenames or NONE"| stop
+    daemon -.->|"kills used slots, boots and primes<br/>replacements in the background"| pool
+```
+
 1. `serve` splits the `feedback_*.md` files into shards of 12 and boots one
    `claude -p --input-format stream-json` haiku session per shard. Each gets
    a priming turn with its shard's rules, replies READY, and waits.

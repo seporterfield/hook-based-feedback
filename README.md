@@ -31,59 +31,46 @@ hooks.
 
 ## Architecture
 
-When the agent finishes a turn, the Stop hook asks small haiku judges whether
-the response breaks any of your feedback rules. A violation blocks the turn
-and the rule text goes back to the agent, which must revise.
+Claude Code fires lifecycle events. Hooks route those events to scripts.
+The scripts hand the agent's output plus your `feedback_*.md` rules to small
+haiku judges. A clear violation blocks the turn and the rule text goes back
+to the agent, which must revise.
 
-Two ways the judges run:
+```mermaid
+flowchart TD
+    claude["Claude Code"]
 
-- Cold (default): the hook spawns fresh haiku processes, each judging a shard
-  of the rules. Simple, no moving parts, but every stop pays process boot and
-  full rule reprocessing.
-- Warm (optional): a daemon keeps haiku sessions booted and primed ahead of
-  time, one per rule shard. The hook hands its response to a ready session
-  per shard over a unix socket and gets the merged verdict back. Used
-  sessions are killed and replaced in the background.
-  See [tools/warm_judge](tools/warm_judge/README.md).
+    claude -->|"SessionStart event"| session_start
+    claude -->|"PostToolUse event (Edit/Write)"| edit
+    claude -->|"Stop event"| stop
 
-```
-                     agent finishes a turn
-                              |
-                              v
-                     Stop hook (stop.py)
-                              |
-              warm daemon socket present?
-                    |                   |
-                   yes                  no
-                    |                   |
-                    v                   v
-        warm_judge daemon        spawn one haiku
-        (unix socket)            per rule shard
-                    |                   |
-        hands response to one           |
-        primed haiku per shard,         |
-        in parallel                     |
-                    |                   |
-   +----------------+-----+             |
-   | pool of haiku sessions|            |
-   | one per rule shard,   |            |
-   | rules already cached  |            |
-   +----------------+-----+             |
-                    |                   |
-     used sessions killed,              |
-     replacements primed in             |
-     the background                     |
-                    |                   |
-                    +---------+---------+
-                              |
-                              v
-                verdict: rule filenames or NONE
-                              |
-                              v
-             exit 0 (clean) or exit 2 (agent revises)
+    subgraph hook_scripts["hook scripts (.claude/hooks/)"]
+        session_start["session_start.py"]
+        edit["edit.py"]
+        stop["stop.py"]
+    end
+
+    rules[("feedback_*.md<br/>your rules")]
+
+    session_start -->|"git pull"| rules
+    rules -->|"split into small piles"| judges
+    edit -->|"the edit"| judges
+    stop -->|"the response"| judges
+
+    subgraph judges["haiku judges, one per pile"]
+        judge_a["haiku"]
+        judge_b["haiku"]
+        judge_c["haiku"]
+    end
+
+    judges -->|"clear violation"| revise["exit 2: rule text returned,<br/>agent revises"]
+    judges -->|"NONE"| clean["exit 0: turn passes"]
+    revise --> claude
 ```
 
-<img width="929" height="703" alt="image" src="https://github.com/user-attachments/assets/4de05435-98ba-4d79-9d5d-d0e3d3f60463" />
+For efficiency, an optional daemon maintains a warm pool of these judges,
+pre-booted and pre-primed with the rules.
+See [tools/warm_judge](tools/warm_judge/README.md).
 
 
 ## Setup

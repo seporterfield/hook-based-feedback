@@ -73,6 +73,10 @@ sessions instead of cold spawns:
 python3 tools/warm_judge/warm_judge.py serve &
 ```
 
+Or set `WARM_JUDGE=1` and `session_start.py` starts it for you each session,
+using the copy synced into the memory dir. Each primed session is a real
+billed request, so this stays opt-in.
+
 `stop.py` uses it automatically when the daemon is up and falls back to cold
 spawns when it is not. Details in [tools/warm_judge](tools/warm_judge/README.md).
 

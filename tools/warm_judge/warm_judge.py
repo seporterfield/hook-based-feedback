@@ -16,6 +16,7 @@ from pathlib import Path
 MAX_RESPONSE_CHARS = 6000
 MAX_RULE_BODY_CHARS = 1200
 SLOT_MAX_AGE_S = 900
+IDLE_SHUTDOWN_S = 1800
 JUDGE_TIMEOUT_S = 60
 CLIENT_TIMEOUT_S = 75
 
@@ -135,6 +136,7 @@ class Pool:
         self.spares = spares
         self.lock = threading.Lock()
         self.slots: list[Slot] = []
+        self.last_judgment = time.monotonic()
         self.refill()
 
     def refill(self) -> None:
@@ -148,6 +150,7 @@ class Pool:
                 self.slots.append(Slot(rules))
 
     def take(self) -> Slot | None:
+        self.last_judgment = time.monotonic()
         with self.lock:
             for index, slot in enumerate(self.slots):
                 if slot.alive() and slot.primed.is_set():
@@ -184,9 +187,11 @@ def serve(arguments: argparse.Namespace) -> int:
     def maintain() -> None:
         while not shutdown.is_set():
             shutdown.wait(30)
+            if time.monotonic() - pool.last_judgment > IDLE_SHUTDOWN_S:
+                shutdown.set()
+                server.shutdown()
+                return
             pool.recycle_stale()
-
-    threading.Thread(target=maintain, daemon=True).start()
 
     class Handler(socketserver.StreamRequestHandler):
         def handle(self) -> None:
@@ -220,7 +225,10 @@ def serve(arguments: argparse.Namespace) -> int:
             return {"verdict": verdict}
 
     with socketserver.ThreadingUnixStreamServer(str(path), Handler) as server:
+        threading.Thread(target=maintain, daemon=True).start()
         server.serve_forever()
+    for slot in pool.slots:
+        slot.kill()
     path.unlink(missing_ok=True)
     return 0
 

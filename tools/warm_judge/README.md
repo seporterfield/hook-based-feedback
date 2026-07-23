@@ -85,3 +85,10 @@ Each priming turn is a real billed request. The first one writes the rule
 text to the prompt cache, refills mostly read it back at cache-read rates.
 Each recycled or refilled slot is one small request. Keep `--spares` at 1
 unless stops arrive faster than one judgment finishes.
+
+Per stop, the warm path is cheaper than the cold path, because the cold path
+spawns several processes that each reprocess the full context at full price
+while a warm judgment reads it from cache. The standing cost is the 15 minute
+slot recycle while the daemon idles. To cap it, the daemon shuts itself down
+after 30 minutes with no judgments. The session-start autostart brings it
+back on the next session.

@@ -57,6 +57,28 @@ python3 warm_judge.py stop                        # shut down
 `AGENT_MEMORY_DIR` or `CLAUDE_PROJECT_DIR` control which rules directory is
 loaded, same resolution as the hooks.
 
+## FAQ
+
+**Is the pool per Claude session or per device?**
+
+Per rules directory, shared across the device. Every Claude session on your
+machine that uses the same rules directory talks to the same daemon and the
+same pool. A different project gets a different socket, so it needs its own
+daemon.
+
+**Can any Claude session claim any slot?**
+
+Yes. Slots belong to the daemon, not to any session. The first stop to ask
+gets the primed slot. If two sessions stop at the same moment, the second
+falls back to the cold path for that turn. Raise `--spares` if you run
+several sessions in parallel.
+
+**Can any slot judge any rule file?**
+
+Yes. Every slot is primed with all the `feedback_*.md` files, so slots are
+interchangeable. A new or edited rule reaches the pool when slots turn over,
+after one use or at the 15 minute age limit, whichever comes first.
+
 ## Costs
 
 Each priming turn is a real billed request. The first one writes the rule

@@ -64,6 +64,18 @@ git push
 
 The rule is live the next session.
 
+## Enable warm judging (optional)
+
+Start the warm judge daemon so Stop-hook verdicts come from pre-primed haiku
+sessions instead of cold spawns:
+
+```
+python3 tools/warm_judge/warm_judge.py serve &
+```
+
+`stop.py` uses it automatically when the daemon is up and falls back to cold
+spawns when it is not. Details in [tools/warm_judge](tools/warm_judge/README.md).
+
 ## Add a check
 
 `edit.py` runs the scripts named in its `EDIT_CHECKS` list. To add one, drop a script in

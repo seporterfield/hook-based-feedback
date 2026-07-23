@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +19,7 @@ MAX_RESPONSE_CHARS = 6000
 MAX_MEMORY_BODY_CHARS = 1200
 SHARD_SIZE = 12
 MAX_WORKERS = 8
+WARM_JUDGE_TIMEOUT_S = 75
 
 
 def read_last_assistant_text(transcript_path: Path) -> str:
@@ -90,6 +93,35 @@ NONE
     return result.stdout.strip()
 
 
+def ask_warm_judge(response: str) -> str | None:
+    digest = hashlib.md5(str(memory_dir()).encode()).hexdigest()[:8]
+    path = f"/tmp/warm-judge-{os.getuid()}-{digest}.sock"
+    if not os.path.exists(path):
+        return None
+    try:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(WARM_JUDGE_TIMEOUT_S)
+        connection.connect(path)
+        connection.sendall(
+            json.dumps({"command": "judge", "response": response}).encode() + b"\n"
+        )
+        chunks = []
+        while True:
+            chunk = connection.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if chunk.endswith(b"\n"):
+                break
+        connection.close()
+        reply = json.loads(b"".join(chunks))
+    except (OSError, ValueError):
+        return None
+    if "verdict" not in reply:
+        return None
+    return reply["verdict"]
+
+
 def check_feedback_violations(payload: dict) -> int:
     transcript = payload.get("transcript_path", "")
     if not transcript or not Path(transcript).is_file():
@@ -103,17 +135,24 @@ def check_feedback_violations(payload: dict) -> int:
     if not memories:
         return 0
 
-    shards = [
-        memories[i : i + SHARD_SIZE] for i in range(0, len(memories), SHARD_SIZE)
-    ]
-    with ThreadPoolExecutor(max_workers=min(len(shards), MAX_WORKERS)) as executor:
-        verdicts = executor.map(lambda shard: ask_haiku(response, shard), shards)
+    warm_verdict = ask_warm_judge(response)
+    if warm_verdict is not None:
+        verdicts = [warm_verdict]
+    else:
+        shards = [
+            memories[i : i + SHARD_SIZE] for i in range(0, len(memories), SHARD_SIZE)
+        ]
+        with ThreadPoolExecutor(max_workers=min(len(shards), MAX_WORKERS)) as executor:
+            verdicts = list(
+                executor.map(lambda shard: ask_haiku(response, shard), shards)
+            )
 
     flagged: list[str] = []
     for verdict in verdicts:
         if not verdict or verdict.upper().splitlines()[0].strip() == "NONE":
             continue
-        flagged.extend(re.findall(r"feedback_[a-z0-9_]+\.md", verdict))
+        for name in re.findall(r"feedback_[a-z0-9_]+(?:\.md)?", verdict):
+            flagged.append(name if name.endswith(".md") else f"{name}.md")
     flagged = list(dict.fromkeys(flagged))
     if not flagged:
         return 0

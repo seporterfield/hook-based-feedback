@@ -30,7 +30,56 @@ A hook is a script Claude Code runs on a lifecycle event. This quickstart uses `
 hooks.
 
 ## Architecture
-Events -> orchestrator scripts -> spawns one claude haiku per markdown file to judge if claude must be punished with feedback.
+
+When the agent finishes a turn, the Stop hook asks small haiku judges whether
+the response breaks any of your feedback rules. A violation blocks the turn
+and the rule text goes back to the agent, which must revise.
+
+Two ways the judges run:
+
+- Cold (default): the hook spawns fresh haiku processes, each judging a shard
+  of the rules. Simple, no moving parts, but every stop pays process boot and
+  full rule reprocessing.
+- Warm (optional): a daemon keeps haiku sessions booted and primed with the
+  rules ahead of time. The hook hands its response to a ready session over a
+  unix socket and gets the verdict back. Used sessions are killed and replaced
+  in the background. See [tools/warm_judge](tools/warm_judge/README.md).
+
+```
+                     agent finishes a turn
+                              |
+                              v
+                     Stop hook (stop.py)
+                              |
+              warm daemon socket present?
+                    |                   |
+                   yes                  no
+                    |                   |
+                    v                   v
+        warm_judge daemon        spawn one haiku
+        (unix socket)            per rule shard
+                    |                   |
+        hands response to a             |
+        primed haiku session            |
+                    |                   |
+   +----------------+-----+             |
+   | pool of haiku sessions|            |
+   | rules already cached  |            |
+   +----------------+-----+             |
+                    |                   |
+     used session killed,               |
+     replacement primed in              |
+     the background                     |
+                    |                   |
+                    +---------+---------+
+                              |
+                              v
+                verdict: rule filenames or NONE
+                              |
+                              v
+             exit 0 (clean) or exit 2 (agent revises)
+```
+
 <img width="929" height="703" alt="image" src="https://github.com/user-attachments/assets/4de05435-98ba-4d79-9d5d-d0e3d3f60463" />
 
 

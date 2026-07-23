@@ -1,34 +1,38 @@
 # warm_judge
 
-A daemon that keeps pre-warmed haiku judge sessions ready, so the Stop hook
-gets its verdict from an already-primed session instead of cold-starting
-one `claude` process per rule shard.
+A daemon that keeps pre-warmed haiku judge sessions ready, one per rule
+shard, so the Stop hook gets its verdicts from already-primed sessions
+instead of cold-starting a `claude` process per shard.
 
 ## Why
 
-Every stop, the judge must read all your feedback rules plus the response.
-Cold, that means spawning several `claude -p` processes (about 5s boot each)
-and paying to process the full rule text every time. Measured on a 104-rule
-setup, the cold path takes about 26s per stop.
+Every stop, the judges must read your feedback rules plus the response.
+The rules are split into shards of 12 files because a small model judging
+a short list of rules is far more accurate than one skimming a long list.
+Cold, each stop spawns one `claude -p` process per shard, about 5s boot
+each, and pays to process the shard text and the shared context every time.
+Measured on a 104-rule setup, the cold path takes about 26s per stop.
 
-Warm, the rules are sent once per session as a priming turn. The Anthropic
-prompt cache keys on the prompt bytes, so every later session priming with
-the same rules reads the cache instead of reprocessing (measured: 47,167
-tokens written once, then read back on every refill). A judgment on a primed
-session took 9 to 13s in testing, with occasional slower outliers when the
-API throttles.
+Warm, each shard's rules are sent once as a priming turn when its slot
+boots. The Anthropic prompt cache keys on the prompt bytes, so every later
+slot priming with the same shard reads the cache instead of reprocessing.
+A sharded warm judgment measured 21 to 22s on a throttled account, similar
+wall clock to cold. The reliable wins are cost, nothing gets reprocessed at
+full price, and no 9-process boot storm on every stop.
 
 ## How it works
 
-1. `serve` boots one or more `claude -p --input-format stream-json` haiku
-   sessions and sends each a priming turn containing all `feedback_*.md`
-   rules. The session replies READY and waits.
+1. `serve` splits the `feedback_*.md` files into shards of 12 and boots one
+   `claude -p --input-format stream-json` haiku session per shard. Each gets
+   a priming turn with its shard's rules, replies READY, and waits.
 2. The Stop hook sends the finished assistant response over a unix socket.
-3. The daemon hands it to a primed session as one new turn and returns the
-   verdict, violated rule filenames or NONE.
-4. The used session is killed. A replacement is booted and primed in the
-   background, off the critical path, so the next stop finds a warm slot.
+3. The daemon takes one primed slot from every shard, sends the response to
+   all of them in parallel, and merges the verdicts, violated rule filenames
+   or NONE.
+4. Used sessions are killed. Replacements are booted and primed in the
+   background, off the critical path, so the next stop finds warm slots.
 5. Slots older than 15 minutes are recycled so rule edits get picked up.
+6. After 30 minutes with no judgments the daemon exits.
 
 Sessions are used for exactly one judgment. That keeps every verdict
 independent, with no conversation history bleeding between judgments.
@@ -66,37 +70,39 @@ machine that uses the same rules directory talks to the same daemon and the
 same pool. A different project gets a different socket, so it needs its own
 daemon.
 
-**Can any Claude session claim any slot?**
+**Can any Claude session claim slots?**
 
 Yes. Slots belong to the daemon, not to any session. The first stop to ask
-gets the primed slot. If two sessions stop at the same moment, the second
-falls back to the cold path for that turn. Raise `--spares` if you run
-several sessions in parallel.
+takes one primed slot from every shard. If two sessions stop at the same
+moment, the second falls back to the cold path for that turn. Raise
+`--spares` if you run several sessions in parallel.
 
 **Can any slot judge any rule file?**
 
-Yes. Every slot is primed with all the `feedback_*.md` files, so slots are
-interchangeable. A new or edited rule reaches the pool when slots turn over,
-after one use or at the 15 minute age limit, whichever comes first.
+No. Each slot knows one shard of 12 rules, kept small so haiku stays
+accurate. A stop claims one slot from every shard in parallel, so each
+judgment still covers every rule. A new or edited rule reaches the pool when
+slots turn over, after one use or at the 15 minute age limit.
 
 **Does the warm pool cost more than cold spawns?**
 
-No. Each stop costs less warm, because one cached judgment replaces several
-cold processes that each reprocess everything at full price. The only extra
-cost is keeping the spare slot fresh while nothing happens, about one small
-request per 15 minutes. The daemon exits after 30 idle minutes, so that burn
-stops when you walk away.
+No. Each stop costs less warm, because cached judgments replace cold
+processes that each reprocess everything at full price. The only extra cost
+is keeping the spare slots fresh while nothing happens, one small request
+per slot per 15 minutes. The daemon exits after 30 idle minutes, so that
+burn stops when you walk away.
 
 ## Costs
 
-Each priming turn is a real billed request. The first one writes the rule
-text to the prompt cache, refills mostly read it back at cache-read rates.
-Each recycled or refilled slot is one small request. Keep `--spares` at 1
-unless stops arrive faster than one judgment finishes.
+Each priming turn is a real billed request. The first one writes its shard
+to the prompt cache, refills mostly read it back at cache-read rates. Each
+recycled or refilled slot is one small request, and a 104-rule setup keeps
+9 slots per spare. Keep `--spares` at 1 unless stops arrive faster than one
+judgment finishes.
 
-Per stop, the warm path is cheaper than the cold path, because the cold path
-spawns several processes that each reprocess the full context at full price
-while a warm judgment reads it from cache. The standing cost is the 15 minute
-slot recycle while the daemon idles. To cap it, the daemon shuts itself down
+Per stop, the warm path is cheaper than the cold path, because the cold
+path's parallel spawns each reprocess the shared context at full price
+while warm judgments read it from cache. The standing cost is the 15 minute
+recycle while the daemon idles. To cap it, the daemon shuts itself down
 after 30 minutes with no judgments. The session-start autostart brings it
 back on the next session.

@@ -11,10 +11,12 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 MAX_RESPONSE_CHARS = 6000
 MAX_RULE_BODY_CHARS = 1200
+SHARD_SIZE = 12
 SLOT_MAX_AGE_S = 900
 IDLE_SHUTDOWN_S = 1800
 JUDGE_TIMEOUT_S = 60
@@ -51,7 +53,7 @@ def socket_path(directory: Path) -> Path:
     return Path(f"/tmp/warm-judge-{os.getuid()}-{digest}.sock")
 
 
-def load_rules(directory: Path) -> str:
+def load_shards(directory: Path) -> list[str]:
     blocks = []
     for path in sorted(directory.glob("feedback_*.md")):
         try:
@@ -59,7 +61,10 @@ def load_rules(directory: Path) -> str:
         except OSError:
             continue
         blocks.append(f"=== {path.name} ===\n{body[:MAX_RULE_BODY_CHARS]}")
-    return "\n\n".join(blocks)
+    return [
+        "\n\n".join(blocks[i : i + SHARD_SIZE])
+        for i in range(0, len(blocks), SHARD_SIZE)
+    ]
 
 
 class Slot:
@@ -135,35 +140,48 @@ class Pool:
         self.rules_dir = rules_dir
         self.spares = spares
         self.lock = threading.Lock()
-        self.slots: list[Slot] = []
+        self.shards: list[list[Slot]] = []
         self.last_judgment = time.monotonic()
         self.refill()
 
     def refill(self) -> None:
+        shard_rules = load_shards(self.rules_dir)
         with self.lock:
-            self.slots = [s for s in self.slots if s.alive()]
-            missing = self.spares - len(self.slots)
-            if missing <= 0:
-                return
-            rules = load_rules(self.rules_dir)
-            for _ in range(missing):
-                self.slots.append(Slot(rules))
+            while len(self.shards) < len(shard_rules):
+                self.shards.append([])
+            del self.shards[len(shard_rules):]
+            for index, rules in enumerate(shard_rules):
+                slots = [slot for slot in self.shards[index] if slot.alive()]
+                while len(slots) < self.spares:
+                    slots.append(Slot(rules))
+                self.shards[index] = slots
 
-    def take(self) -> Slot | None:
+    def take_all(self) -> list[Slot] | None:
         self.last_judgment = time.monotonic()
         with self.lock:
-            for index, slot in enumerate(self.slots):
-                if slot.alive() and slot.primed.is_set():
-                    return self.slots.pop(index)
-        return None
+            taken: list[tuple[int, Slot]] = []
+            for index, slots in enumerate(self.shards):
+                position = next(
+                    (candidate_index for candidate_index, candidate in enumerate(slots)
+                     if candidate.alive() and candidate.primed.is_set()),
+                    None,
+                )
+                if position is None:
+                    for shard_index, slot in taken:
+                        self.shards[shard_index].append(slot)
+                    return None
+                taken.append((index, slots.pop(position)))
+            return [slot for _, slot in taken]
 
     def recycle_stale(self) -> None:
+        stale = []
         with self.lock:
-            fresh, stale = [], []
-            for slot in self.slots:
-                age = time.monotonic() - slot.created_at
-                (stale if age > SLOT_MAX_AGE_S else fresh).append(slot)
-            self.slots = fresh
+            for index, slots in enumerate(self.shards):
+                fresh = []
+                for slot in slots:
+                    age = time.monotonic() - slot.created_at
+                    (stale if age > SLOT_MAX_AGE_S else fresh).append(slot)
+                self.shards[index] = fresh
         for slot in stale:
             slot.kill()
         self.refill()
@@ -171,8 +189,12 @@ class Pool:
     def status(self) -> dict:
         with self.lock:
             return {
-                "slots": len(self.slots),
-                "primed": sum(1 for s in self.slots if s.primed.is_set()),
+                "shards": len(self.shards),
+                "slots": sum(len(slots) for slots in self.shards),
+                "primed": sum(
+                    1 for slots in self.shards
+                    for slot in slots if slot.primed.is_set()
+                ),
             }
 
 
@@ -183,15 +205,6 @@ def serve(arguments: argparse.Namespace) -> int:
         path.unlink()
     pool = Pool(directory, arguments.spares)
     shutdown = threading.Event()
-
-    def maintain() -> None:
-        while not shutdown.is_set():
-            shutdown.wait(30)
-            if time.monotonic() - pool.last_judgment > IDLE_SHUTDOWN_S:
-                shutdown.set()
-                server.shutdown()
-                return
-            pool.recycle_stale()
 
     class Handler(socketserver.StreamRequestHandler):
         def handle(self) -> None:
@@ -211,25 +224,51 @@ def serve(arguments: argparse.Namespace) -> int:
             self.wfile.write(json.dumps(reply).encode() + b"\n")
 
         def run_judgment(self, response: str) -> dict:
-            slot = pool.take()
-            threading.Thread(target=pool.refill, daemon=True).start()
-            if slot is None:
-                return {"error": "no primed slot"}
+            slots = pool.take_all()
+            if slots is None:
+                return {"error": "not every shard has a primed slot"}
             try:
-                verdict = slot.judge(response)
+                with ThreadPoolExecutor(max_workers=len(slots)) as executor:
+                    verdicts = list(
+                        executor.map(lambda slot: slot.judge(response), slots)
+                    )
             except Exception as error:
                 return {"error": str(error)}
             finally:
-                slot.kill()
+                for slot in slots:
+                    slot.kill()
                 threading.Thread(target=pool.refill, daemon=True).start()
-            return {"verdict": verdict}
+            lines: list[str] = []
+            for verdict in verdicts:
+                stripped = verdict.strip()
+                if not stripped:
+                    continue
+                if stripped.splitlines()[0].strip().upper() == "NONE":
+                    continue
+                lines.extend(stripped.splitlines())
+            return {"verdict": "\n".join(lines) if lines else "NONE"}
+
+    def maintain() -> None:
+        while not shutdown.is_set():
+            shutdown.wait(30)
+            if time.monotonic() - pool.last_judgment > IDLE_SHUTDOWN_S:
+                shutdown.set()
+                server.shutdown()
+                return
+            pool.recycle_stale()
 
     with socketserver.ThreadingUnixStreamServer(str(path), Handler) as server:
+        bound_inode = os.stat(path).st_ino
         threading.Thread(target=maintain, daemon=True).start()
         server.serve_forever()
-    for slot in pool.slots:
-        slot.kill()
-    path.unlink(missing_ok=True)
+    for slots in pool.shards:
+        for slot in slots:
+            slot.kill()
+    try:
+        if os.stat(path).st_ino == bound_inode:
+            path.unlink()
+    except OSError:
+        pass
     return 0
 
 

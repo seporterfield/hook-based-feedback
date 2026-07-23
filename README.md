@@ -40,10 +40,11 @@ Two ways the judges run:
 - Cold (default): the hook spawns fresh haiku processes, each judging a shard
   of the rules. Simple, no moving parts, but every stop pays process boot and
   full rule reprocessing.
-- Warm (optional): a daemon keeps haiku sessions booted and primed with the
-  rules ahead of time. The hook hands its response to a ready session over a
-  unix socket and gets the verdict back. Used sessions are killed and replaced
-  in the background. See [tools/warm_judge](tools/warm_judge/README.md).
+- Warm (optional): a daemon keeps haiku sessions booted and primed ahead of
+  time, one per rule shard. The hook hands its response to a ready session
+  per shard over a unix socket and gets the merged verdict back. Used
+  sessions are killed and replaced in the background.
+  See [tools/warm_judge](tools/warm_judge/README.md).
 
 ```
                      agent finishes a turn
@@ -59,16 +60,18 @@ Two ways the judges run:
         warm_judge daemon        spawn one haiku
         (unix socket)            per rule shard
                     |                   |
-        hands response to a             |
-        primed haiku session            |
+        hands response to one           |
+        primed haiku per shard,         |
+        in parallel                     |
                     |                   |
    +----------------+-----+             |
    | pool of haiku sessions|            |
+   | one per rule shard,   |            |
    | rules already cached  |            |
    +----------------+-----+             |
                     |                   |
-     used session killed,               |
-     replacement primed in              |
+     used sessions killed,              |
+     replacements primed in             |
      the background                     |
                     |                   |
                     +---------+---------+

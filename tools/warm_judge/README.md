@@ -79,6 +79,14 @@ Yes. Every slot is primed with all the `feedback_*.md` files, so slots are
 interchangeable. A new or edited rule reaches the pool when slots turn over,
 after one use or at the 15 minute age limit, whichever comes first.
 
+**Does the warm pool cost more than cold spawns?**
+
+No. Each stop costs less warm, because one cached judgment replaces several
+cold processes that each reprocess everything at full price. The only extra
+cost is keeping the spare slot fresh while nothing happens, about one small
+request per 15 minutes. The daemon exits after 30 idle minutes, so that burn
+stops when you walk away.
+
 ## Costs
 
 Each priming turn is a real billed request. The first one writes the rule
